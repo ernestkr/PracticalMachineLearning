@@ -1,0 +1,161 @@
+---
+title: "Assignment"
+author: "Ernest Kurniawan"
+output: html_document
+keep_md: yes
+---
+
+### Executive Summary
+
+This work develops a prediction algorithm to clasify the quality of the exercise based on the features extracted from sensors' output. Four sensors attached on the belt, arm, dumbbell, and forearm of the test subject are used, and several features are extracted from the output as explained in the following paper:
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13), Stuttgart, Germany: ACM SIGCHI, 2013.
+
+The prediction algorithm is developed by first choosing the appropriate set of features that are most descriptive to the exercise quality. We choose the feature set for each of the sensor separately to reduce the complexity, and for each sensor device we select five most significant features. Then, the training data is partitioned to facilitate cross validation, which is performed using five times random subsampling. The expected out of sample error is then reported, and the final prediction algorithm is run on the test data set.
+
+### Prediction Algorithm
+
+First, download the necessary data for processing and load the training data set.
+
+```{r, echo=TRUE}
+## Download the csv file containing the data if it is not yet available
+if (!file.exists("pml-training.csv"))
+  download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", "pml-training.csv")
+if (!file.exists("pml-testing.csv"))
+  download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", "pml-testing.csv")
+## Load the training data set
+Training = read.csv('pml-training.csv', header=TRUE)
+```
+
+Then, perform feature selection by throwing away those features that are irrelevant, and choosing only those that are most descriptive to the desired outcome (i.e. the excercise quality as categorized by the classe variable). We perform this selection on each of the sensor device separately, and five features are selected from each one of them.
+
+```{r, echo=TRUE, cache=TRUE, message=FALSE}
+# Install the caret packet if it not yet done, and load it accordingly
+if (!"caret" %in% rownames(installed.packages())) install.packages("caret")
+library(caret)
+
+# Setup the selector to grab the relevant variable corresponding to four different sensors used
+selBelt = sapply(names(Training), grepl, pattern="_belt", fixed=TRUE)
+selArm = sapply(names(Training), grepl, pattern="_arm", fixed=TRUE)
+selDumbbell = sapply(names(Training), grepl, pattern="_dumbbell", fixed=TRUE)
+selForearm = sapply(names(Training), grepl, pattern="_forearm", fixed=TRUE)
+
+# Set the selector for classe variable to be true
+selBelt[160] = TRUE
+selArm[160] = TRUE
+selDumbbell[160] = TRUE
+selForearm[160] = TRUE
+
+# set the seed for reproducibility
+set.seed(88288)
+
+# Extract the features corresponding to the belt sensor
+MyTrain <- Training[,selBelt]
+# Remove the irrelevant features
+SumNA <- sapply(MyTrain, function(x) sum(is.na(x)))
+SumEmpty <- sapply(MyTrain, function(x) sum(x==''))
+MyTrain <- MyTrain[, SumNA == 0 & SumEmpty==0]
+# Fit a model using classification tree for the belt sensor features
+fitModBelt <- train(classe~., method='rpart', data=MyTrain)
+
+# Extract the features corresponding to the arm sensor
+MyTrain <- Training[,selArm]
+# Remove the irrelevant features
+SumNA <- sapply(MyTrain, function(x) sum(is.na(x)))
+SumEmpty <- sapply(MyTrain, function(x) sum(x==''))
+MyTrain <- MyTrain[, SumNA == 0 & SumEmpty==0]
+# Fit a model using classification tree for the arm sensor features
+fitModArm <- train(classe~., method='rpart', data=MyTrain)
+
+# Extract the features corresponding to the dumbbell sensor
+MyTrain <- Training[, selDumbbell]
+# Remove the irrelevant features
+SumNA <- sapply(MyTrain, function(x) sum(is.na(x)))
+SumEmpty <- sapply(MyTrain, function(x) sum(x==''))
+MyTrain <- MyTrain[, SumNA == 0 & SumEmpty==0]
+# Fit a model using classification tree for the dumbbell sensor features
+fitModDumbbell <- train(classe~., method='rpart', data=MyTrain)
+
+# Extract the features corresponding to the forearm sensor
+MyTrain <- Training[, selForearm]
+# Remove the irrelevant features
+SumNA <- sapply(MyTrain, function(x) sum(is.na(x)))
+SumEmpty <- sapply(MyTrain, function(x) sum(x==''))
+MyTrain <- MyTrain[, SumNA == 0 & SumEmpty==0]
+# Fit a model using classification tree for the forearm sensor features
+fitModForearm <- train(classe~., method='rpart', data=MyTrain)
+
+# Perform variable selection based on the imporatnce of each variable on every model we created
+selector = rep(FALSE, ncol(Training))
+# Choose five most important variables from the model for belt sensor features
+imp <- varImp(fitModBelt)$importance
+selNames <- rownames(imp)[order(imp$Overall, decreasing=TRUE)[1:5]]
+for (i in selNames)
+  selector = (selector | names(Training)==i)
+# Choose five most important variables from the model for arm sensor features
+imp <- varImp(fitModArm)$importance
+selNames <- rownames(imp)[order(imp$Overall, decreasing=TRUE)[1:5]]
+for (i in selNames)
+  selector = (selector | names(Training)==i)
+# Choose five most important variables from the model for dumbbell sensor features
+imp <- varImp(fitModDumbbell)$importance
+selNames <- rownames(imp)[order(imp$Overall, decreasing=TRUE)[1:5]]
+for (i in selNames)
+  selector = (selector | names(Training)==i)
+# Choose five most important variables from the model for forearm sensor features
+imp <- varImp(fitModForearm)$importance
+selNames <- rownames(imp)[order(imp$Overall, decreasing=TRUE)[1:5]]
+for (i in selNames)
+  selector = (selector | names(Training)==i)
+# Set the variable classe to be TRUE
+selector[160] = TRUE
+# Setup the training data set to include only the selected features
+MyTrain = Training[, selector]
+```
+
+### Cross Validation and Error Analysis
+
+Perform five times **cross validation** using random subsampling, and calculate the **expected out of sample error**.
+
+```{r, echo=TRUE, cache=TRUE, message=FALSE}
+# Create random partitions of the training data for cross validation
+inTrain <- createDataPartition(y=MyTrain$classe, p=0.6, list=FALSE, times=5)
+MyModels <- list(Model1=NULL, Model2=NULL, Model3=NULL, Model4=NULL, Model5=NULL)
+MyErrors <- rep(0, 5)
+# Perform five times cross validation
+for (i in 1:5){
+  CurrTrain <- MyTrain[inTrain[,i],]
+  CurrDevel <- MyTrain[-inTrain[,i],]
+  CurrentModel <- train(classe~., method='rf', data=CurrTrain, ntree=50)
+  MyModels[[i]] <-  CurrentModel
+  CurrentPredict <- predict(CurrentModel, newdata=MyTrain[-inTrain[,i],])
+  MyErrors[i] <- sum(CurrentPredict != CurrDevel$classe)/length(CurrentPredict)
+}
+```
+
+The **expected out of sample error** is calculated to be `r mean(MyErrors)`, which is quite good. As such, we can proceed to apply the prediction algorithm to the test data, which uses each model fit developed for the cross validation, and perform majority voting.
+
+```{r, echo=TRUE}
+# Load the testing data set
+Testing <- read.csv('pml-testing.csv', header=TRUE)
+MyPrediction <- NULL
+# Apply the prediction algorithm
+for (i in 1:5){
+  MyPrediction <- rbind(MyPrediction, predict(MyModels[[i]], newdata=Testing))
+}
+# Perform majority voting
+Classification <- as.factor(c('A', 'B', 'C', 'D', 'E'))
+Prediction <- NULL
+for (i in 1:5)
+  Prediction <- rbind(Prediction, apply((MyPrediction == i), 2, sum))
+Indices <- apply(Prediction, 2, which.max)
+Prediction <- sapply(Indices, function(x){Classification[x]})
+```
+
+### Prediction Result on Test Data Set
+
+The prediction output we obtain for the twenty test cases in the test data set are given as follows:
+
+```{r, echo=TRUE}
+Prediction
+```
